@@ -24,11 +24,9 @@ def get_relative_paths(folder_path, base_folder):
             dirnames.clear()
             continue
 
-        # Process directories first
         rel_root = os.path.relpath(root, base_folder)
         dirs.add(rel_root)
 
-        # Process files
         for filename in filenames:
             rel_path = os.path.relpath(os.path.join(root, filename), base_folder)
             files.add(rel_path)
@@ -50,12 +48,8 @@ def copy_files(src, dest):
 
                 os.makedirs(os.path.dirname(dest_path), exist_ok=True)
 
-                copy_condition = (
-                        not os.path.exists(dest_path) or
-                        os.path.getmtime(src_path) > os.path.getmtime(dest_path)
-                )
-
-                if copy_condition:
+                if not os.path.exists(dest_path) or \
+                        os.path.getmtime(src_path) > os.path.getmtime(dest_path):
                     print(f"Copying {src_path} to {dest_path}")
                     shutil.copy2(src_path, dest_path)
 
@@ -65,56 +59,96 @@ def copy_files(src, dest):
 
 def delete_obsolete_items(src, dest):
     try:
-        # Get relative paths
         src_files, src_dirs = get_relative_paths(src, src)
         dest_files, dest_dirs = get_relative_paths(dest, dest)
 
-        # Find obsolete items
         obsolete_files = dest_files - src_files
         obsolete_dirs = dest_dirs - src_dirs
 
-        # Delete obsolete files
         if obsolete_files:
-            print("\nFound obsolete files:")
+            print("\nObsolete files:")
             for rel_path in obsolete_files:
                 print(f"- {rel_path}")
 
             if input("Delete these files? (yes/no): ").lower() == "yes":
                 for rel_path in obsolete_files:
                     abs_path = os.path.join(dest, rel_path)
-                    if os.path.exists(abs_path):
-                        os.remove(abs_path)
-                        print(f"Deleted file: {abs_path}")
-                print("File cleanup complete")
+                    os.remove(abs_path)
+                    print(f"Deleted file: {abs_path}")
 
-        # Delete obsolete directories (deepest first)
         if obsolete_dirs:
-            print("\nFound obsolete directories:")
+            print("\nObsolete directories:")
             dirs_to_delete = sorted(
                 [os.path.join(dest, d) for d in obsolete_dirs],
                 key=lambda x: x.count(os.sep),
                 reverse=True
             )
-
             for d in dirs_to_delete:
                 print(f"- {d}")
-
-            if input("Delete these directories? (yes/no): ").lower() == "yes":
-                for abs_dir in dirs_to_delete:
-                    if os.path.exists(abs_dir):
-                        shutil.rmtree(abs_dir)
-                        print(f"Deleted directory: {abs_dir}")
-                print("Directory cleanup complete")
+                shutil.rmtree(d)
 
         if not obsolete_files and not obsolete_dirs:
-            print("\nDestination is fully synchronized - nothing to delete")
+            print("\nDestination is synchronized")
 
     except Exception as e:
         print(f"Cleanup error: {e}")
 
 
+def restore_files(src, dest):
+    """Restore missing files and directories from backup"""
+    try:
+        src_files, src_dirs = get_relative_paths(src, src)
+        dest_files, dest_dirs = get_relative_paths(dest, dest)
+
+        # Find files/dirs that exist in backup but not in source
+        restore_files = dest_files - src_files
+        restore_dirs = dest_dirs - src_dirs
+
+        if not restore_files and not restore_dirs:
+            print("\nNothing to restore - destination matches source")
+            return
+
+        print("\nFiles to restore:")
+        for f in restore_files:
+            print(f"- {f}")
+
+        print("\nDirectories to restore:")
+        for d in restore_dirs:
+            print(f"- {d}")
+
+        if input("\nConfirm restore? (yes/no): ").lower() == "yes":
+            # Restore directories first
+            for rel_dir in sorted(restore_dirs, key=lambda x: x.count(os.sep)):
+                target_dir = os.path.join(src, rel_dir)
+                os.makedirs(target_dir, exist_ok=True)
+                print(f"Restored directory: {target_dir}")
+
+            # Restore files
+            for rel_path in restore_files:
+                src_file = os.path.join(src, rel_path)
+                backup_file = os.path.join(dest, rel_path)
+
+                os.makedirs(os.path.dirname(src_file), exist_ok=True)
+                shutil.copy2(backup_file, src_file)
+                print(f"Restored file: {src_file}")
+
+            print("\nRestore completed successfully")
+
+    except Exception as e:
+        print(f"Restore error: {e}")
+
+
 if __name__ == "__main__":
-    print("=== Starting synchronization ===")
-    copy_files(source_folder, destination_folder)
-    delete_obsolete_items(source_folder, destination_folder)
-    print("=== Synchronization complete ===")
+    print("1. Sync (source → destination)")
+    print("2. Restore (destination → source)")
+    choice = input("Choose operation (1/2): ").strip()
+
+    if choice == "1":
+        print("\n=== Synchronizing ===")
+        copy_files(source_folder, destination_folder)
+        delete_obsolete_items(source_folder, destination_folder)
+    elif choice == "2":
+        print("\n=== Restoring ===")
+        restore_files(source_folder, destination_folder)
+    else:
+        print("Invalid choice")
