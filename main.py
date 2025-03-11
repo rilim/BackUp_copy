@@ -139,7 +139,6 @@ def restore_files(src, dest):
                 restore_candidates[rel_path] = ('missing', dest_data)
                 continue
 
-            # Only consider files with different timestamps
             if dest_data['mtime'] > src_data['mtime']:
                 restore_candidates[rel_path] = ('newer', dest_data)
             elif dest_data['mtime'] < src_data['mtime']:
@@ -273,20 +272,30 @@ def show_differences():
 
 
 if __name__ == "__main__":
-    print("File Synchronization Tool")
-    print("1. Sync (source → destination)")
-    print("2. Restore (destination → source)")
-    print("3. Show differences")
-    choice = input("Choose operation (1/2/3): ").strip()
+    while True:
+        os.system('cls' if os.name == 'nt' else 'clear')
+        print("\n" + "=" * 40)
+        print("File Synchronization Tool")
+        print("1. Sync (source → destination)")
+        print("2. Restore (destination → source)")
+        print("3. Show differences")
+        print("4. Exit")
+        choice = input("Choose operation (1/2/3/4): ").strip()
 
-    if choice == "1":
-        print("\n=== Synchronizing ===")
-        copy_files(source_folder, destination_folder)
-        delete_obsolete_items(source_folder, destination_folder)
-    elif choice == "2":
-        print("\n=== Restoring ===")
-        restore_files(source_folder, destination_folder)
-    elif choice == "3":
-        show_differences()
-    else:
-        print("Invalid choice")
+        if choice == "1":
+            print("\n=== Synchronizing ===")
+            copy_files(source_folder, destination_folder)
+            delete_obsolete_items(source_folder, destination_folder)
+        elif choice == "2":
+            print("\n=== Restoring ===")
+            restore_files(source_folder, destination_folder)
+        elif choice == "3":
+            print("\n=== Differences ===")
+            show_differences()
+        elif choice == "4":
+            print("Exiting program...")
+            break
+        else:
+            print("Invalid choice, please try again")
+
+        input("\nPress Enter to continue...")
