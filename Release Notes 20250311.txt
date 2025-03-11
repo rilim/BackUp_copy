@@ -1,0 +1,40 @@
+Key Improvements Implemented:
+	
+1. File Hashing:
+   • Uses SHA-256 for content verification
+   • Hash comparison instead of mtime for modified files
+   • Partial hash display in difference reports
+
+2. Parallel Processing:
+   • Uses ThreadPoolExecutor for concurrent copies
+   • Configurable worker count (MAX_WORKERS)
+   • Progress tracking during parallel operations
+
+3. Retry Mechanism:
+   • Exponential backoff retries for file operations
+   • Configurable attempts (RETRY_ATTEMPTS) and delay (RETRY_DELAY)
+   • Unified robust_copy function for all file operations
+
+4. Progress Tracking:
+   • Real-time progress updates
+   • Size estimates and file counts
+   • Visual progress percentage
+
+5. Directory Size Estimation:
+   • Shows total size in MB for directories
+   • Calculates size differences in modified files
+   • Size information in difference reports
+
+6. Colorized Output:
+   • Color-coded status messages
+   • Improved visual hierarchy
+   • Error/warning/success differentiation
+   • ANSI color code support
+
+Usage Notes:
+   • Adjust MAX_WORKERS based on your CPU cores
+   • Modify RETRY_ATTEMPTS and RETRY_DELAY as needed
+   • Colors automatically disabled if terminal doesn't support them
+   • Hash comparisons ensure content accuracy
+   • Size calculations help predict operation duration
+
