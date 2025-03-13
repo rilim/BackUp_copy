@@ -11,7 +11,7 @@ from functools import partial
 source_folder = "D:/BackUp/origin"
 destination_folder = "D:/BackUp/Copy"
 excluded_folders = ["D:/BackUp/origin/Investavimas", "D:/BackUp/origin/Islaidos/Islaidos UK"]
-MAX_WORKERS = 4  # Adjust based on your CPU cores
+MAX_WORKERS = 4
 RETRY_ATTEMPTS = 3
 RETRY_DELAY = 1  # Seconds
 
@@ -166,7 +166,7 @@ def copy_files(src, dest):
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
             for i, (s, d) in enumerate(file_pairs):
                 executor.submit(copy_worker, s, d, progress)
-                if i % 10 == 0:  # Update progress every 10 files
+                if i % 10 == 0:
                     print(f"{Colors.YELLOW}Progress: {progress[0]}/{len(file_pairs)} "
                           f"({progress[0]/len(file_pairs):.1%}){Colors.END}", end='\r')
 
@@ -174,6 +174,72 @@ def copy_files(src, dest):
 
     except Exception as e:
         print(f"{Colors.RED}Copy error: {e}{Colors.END}")
+
+
+def export_to_file(items, filename):
+    """Export list of items to a text file"""
+    with open(filename, 'w') as f:
+        for item in sorted(items):
+            f.write(f"{item}\n")
+    print(f"{Colors.GREEN}List exported to {filename}{Colors.END}")
+
+
+def paginated_display(items, title, max_per_page=20):
+    """Display items with pagination controls"""
+    if not items:
+        return
+
+    page = 0
+    total = len(items)
+    items = list(sorted(items))
+
+    while True:
+        start = page * max_per_page
+        end = start + max_per_page
+        current_page = items[start:end]
+
+        print(f"\n{Colors.YELLOW}{title} ({total} items){Colors.END}")
+        print(f"Page {page+1}/{(total-1)//max_per_page+1}\n")
+
+        for item in current_page:
+            print(f" - {item}")
+            if 'src_files' in globals() and 'dest_files' in globals():
+                if item in src_files and item in dest_files:
+                    print(f"   Source: {format_time(src_files[item]['mtime'])} | Hash: {src_files[item]['hash'][:8]}")
+                    print(f"   Dest:   {format_time(dest_files[item]['mtime'])} | Hash: {dest_files[item]['hash'][:8]}")
+
+        if end < total:
+            choice = input(f"\n{Colors.CYAN}N-next, P-previous, Q-quit: {Colors.END}").lower()
+            if choice == 'n':
+                page = min(page + 1, total // max_per_page)
+            elif choice == 'p':
+                page = max(page - 1, 0)
+            elif choice == 'q':
+                break
+            os.system('cls' if os.name == 'nt' else 'clear')
+        else:
+            break
+
+
+def show_sample(items, title):
+    """Interactive display with multiple viewing options"""
+    if not items:
+        return
+
+    print(f"\n{Colors.YELLOW}{title} ({len(items)} items){Colors.END}")
+    print(f"{Colors.CYAN}1. Show first 3 items")
+    print("2. Browse all (paginated)")
+    print(f"3. Export to file{Colors.END}")
+
+    choice = input(f"{Colors.MAGENTA}Choose option: {Colors.END}").strip()
+
+    if choice == '1':
+        for item in list(sorted(items))[:3]:
+            print(f" - {item}")
+    elif choice == '2':
+        paginated_display(items, title)
+    elif choice == '3':
+        export_to_file(items, f"backup_{title.lower().replace(' ', '_')}.txt")
 
 
 def delete_obsolete_items(src, dest):
@@ -186,10 +252,7 @@ def delete_obsolete_items(src, dest):
         obsolete_dirs = dest_dirs - src_dirs
 
         if obsolete_files:
-            print(f"{Colors.YELLOW}\nObsolete files found ({len(obsolete_files)}):{Colors.END}")
-            for rel_path in list(obsolete_files)[:5]:
-                print(f" - {rel_path}")
-
+            show_sample(obsolete_files, "Obsolete files found")
             if input(f"{Colors.YELLOW}Delete these files? (yes/no): {Colors.END}").lower() == "yes":
                 for rel_path in obsolete_files:
                     abs_path = os.path.join(dest, rel_path)
@@ -200,15 +263,12 @@ def delete_obsolete_items(src, dest):
                         print(f"{Colors.RED}Delete failed: {abs_path} - {e}{Colors.END}")
 
         if obsolete_dirs:
-            print(f"{Colors.YELLOW}\nObsolete directories found ({len(obsolete_dirs)}):{Colors.END}")
             dirs_to_delete = sorted(
                 [os.path.join(dest, d) for d in obsolete_dirs],
                 key=lambda x: x.count(os.sep),
                 reverse=True
             )
-            for d in dirs_to_delete[:5]:
-                print(f" - {d}")
-
+            show_sample(dirs_to_delete, "Obsolete directories found")
             if input(f"{Colors.YELLOW}Delete these directories? (yes/no): {Colors.END}").lower() == "yes":
                 for d in dirs_to_delete:
                     try:
@@ -255,21 +315,18 @@ def restore_files(src, dest):
             categories[status].append(rel_path)
 
         if categories['missing']:
-            print(f"{Colors.YELLOW}\nMissing files ({len(categories['missing'])}):{Colors.END}")
-            for f in categories['missing'][:3]:
-                print(f" - {f}")
+            show_sample(categories['missing'], "Missing files")
 
         if categories['modified']:
-            print(f"{Colors.YELLOW}\nModified files ({len(categories['modified'])}):{Colors.END}")
-            for f in categories['modified'][:3]:
+            modified_list = []
+            for f in categories['modified']:
                 src_time = format_time(src_files[f]['mtime'])
                 dest_time = format_time(dest_files[f]['mtime'])
-                print(f" - {f} (Source: {src_time}, Backup: {dest_time})")
+                modified_list.append(f"{f} (Source: {src_time}, Backup: {dest_time})")
+            show_sample(modified_list, "Modified files")
 
         if missing_dirs:
-            print(f"{Colors.YELLOW}\nMissing directories:{Colors.END}")
-            for d in sorted(missing_dirs)[:3]:
-                print(f" - {d}/")
+            show_sample(sorted(missing_dirs), "Missing directories")
 
         print(f"\n{Colors.MAGENTA}[ Restore Modes ]{Colors.END}")
         print(f"{Colors.CYAN}1: Safe (missing files only)")
@@ -326,6 +383,7 @@ def restore_files(src, dest):
 def show_differences():
     """Show detailed comparison between source and destination"""
     print(f"\n{Colors.MAGENTA}=== Analyzing Differences ==={Colors.END}")
+    global src_files, dest_files
 
     src_files = get_file_details(source_folder, source_folder)
     dest_files = get_file_details(destination_folder, destination_folder)
@@ -350,17 +408,6 @@ def show_differences():
     print(f"\n{Colors.CYAN}{' Modified Files ':-^50}{Colors.END}")
     print(f"Count: {len(modified_files)} | Size Difference: "
           f"{(sum(src_files[f]['size'] for f in modified_files) - sum(dest_files[f]['size'] for f in modified_files))/1024/1024:.2f} MB")
-
-    def show_sample(items, title, max=3):
-        if items:
-            print(f"\n{Colors.YELLOW}{title} (showing {max}):{Colors.END}")
-            for item in list(items)[:max]:
-                print(f" - {item}")
-                if item in src_files and item in dest_files:
-                    print(f"   Source: {format_time(src_files[item]['mtime'])} | "
-                          f"Hash: {src_files[item]['hash'][:8]}")
-                    print(f"   Dest:   {format_time(dest_files[item]['mtime'])} | "
-                          f"Hash: {dest_files[item]['hash'][:8]}")
 
     show_sample(only_in_source, "Unique source files")
     show_sample(only_in_dest, "Unique destination files")
