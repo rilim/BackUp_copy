@@ -1,269 +1,32 @@
 import os
 import shutil
-import fnmatch
-import hashlib
-import time
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
-from functools import partial
-from collections import defaultdict
-
-# Configuration
-source_folder = "D:/BackUp/origin"
-destination_folder = "D:/BackUp/Copy"
-excluded_folders = ["D:/BackUp/origin/Investavimas", "D:/BackUp/origin/Islaidos/Islaidos UK"]
-MAX_WORKERS = 4
-RETRY_ATTEMPTS = 3
-RETRY_DELAY = 1  # Seconds
-
-
-class Colors:
-    GREEN = '\033[92m'
-    YELLOW = '\033[93m'
-    RED = '\033[91m'
-    CYAN = '\033[96m'
-    MAGENTA = '\033[95m'
-    END = '\033[0m'
-
-
-def ensure_logs_dir():
-    """Create logs directory if it doesn't exist"""
-    logs_dir = os.path.join(os.path.dirname(__file__), 'logs')
-    os.makedirs(logs_dir, exist_ok=True)
-    return logs_dir
-
-
-def format_win_path(path):
-    """Convert path to Windows-style with backslashes"""
-    return os.path.normpath(path).replace(os.sep, '\\')
-
-
-def print_hierarchical(items):
-    """Print files in hierarchical format with full paths"""
-    structure = defaultdict(list)
-
-    for full_path in sorted(items):
-        parent = os.path.dirname(full_path)
-        name = os.path.basename(full_path)
-        structure[parent].append((name, os.path.isdir(full_path)))
-
-    for parent in sorted(structure.keys()):
-        print(f"{Colors.CYAN}{parent}\\{Colors.END}")
-        for name, is_dir in sorted(structure[parent]):
-            if is_dir:
-                print(f"  ├─ {Colors.CYAN}{name}\\{Colors.END}")
-            else:
-                print(f"  ├─ {name}")
-
-
-def export_to_file(items, filename):
-    """Export list to logs folder with proper full paths"""
-    logs_dir = ensure_logs_dir()
-    full_path = os.path.join(logs_dir, filename)
-
-    structure = defaultdict(list)
-    for full_item in sorted(items):
-        parent = os.path.dirname(full_item)
-        name = os.path.basename(full_item)
-        structure[parent].append((name, os.path.isdir(full_item)))
-
-    with open(full_path, 'w') as f:
-        for parent in sorted(structure.keys()):
-            f.write(f"{parent}\\\n")
-            for name, is_dir in sorted(structure[parent]):
-                if is_dir:
-                    f.write(f"  {name}\\\n")
-                else:
-                    f.write(f"  {name}\n")
-            f.write("\n")
-
-    print(f"{Colors.GREEN}List exported to {format_win_path(full_path)}{Colors.END}")
-
-
-def paginated_display(items, title, max_per_page=20):
-    """Display items with pagination controls"""
-    if not items:
-        return
-
-    page = 0
-    total = len(items)
-    items = sorted(items)
-
-    while True:
-        start = page * max_per_page
-        end = start + max_per_page
-        current_page = items[start:end]
-
-        print(f"\n{Colors.YELLOW}{title} ({total} items){Colors.END}")
-        print(f"Page {page+1}/{(total-1)//max_per_page+1}\n")
-        print_hierarchical(current_page)
-
-        if end < total:
-            choice = input(f"\n{Colors.CYAN}N-next, P-previous, Q-quit: {Colors.END}").lower()
-            if choice == 'n':
-                page = min(page + 1, total // max_per_page)
-            elif choice == 'p':
-                page = max(page - 1, 0)
-            elif choice == 'q':
-                break
-            os.system('cls' if os.name == 'nt' else 'clear')
-        else:
-            break
-
-
-def show_sample(items, title, base_folder=None):
-    """Interactive display with multiple viewing options"""
-    items = sorted(items) if isinstance(items, set) else items
-    if not items:
-        return
-
-    # Convert to absolute paths if base folder provided
-    abs_items = []
-    for item in items:
-        if base_folder and not os.path.isabs(item):
-            abs_item = os.path.join(base_folder, item)
-            abs_items.append(format_win_path(abs_item))
-        else:
-            abs_items.append(format_win_path(item))
-
-    print(f"\n{Colors.YELLOW}{title} ({len(abs_items)} items){Colors.END}")
-    print(f"{Colors.CYAN}1. Show first 3 items")
-    print("2. Browse all (paginated)")
-    print(f"3. Export to file{Colors.END}")
-
-    choice = input(f"{Colors.MAGENTA}Choose option: {Colors.END}").strip()
-
-    if choice == '1':
-        print(f"\n{Colors.YELLOW}First 3 items:{Colors.END}")
-        print_hierarchical(abs_items[:3])
-    elif choice == '2':
-        paginated_display(abs_items, title)
-    elif choice == '3':
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        safe_title = title.lower().replace(' ', '_')
-        filename = f"{safe_title}_{timestamp}.txt"
-        export_to_file(abs_items, filename)
-
-
-def should_exclude_folder(folder_path):
-    """Check if folder should be excluded from processing"""
-    for pattern in excluded_folders:
-        if fnmatch.fnmatch(folder_path.lower(), f"*{pattern.lower()}*"):
-            return True
-    return False
-
-
-def get_file_hash(filepath):
-    """Generate SHA-256 hash for file contents"""
-    hash_sha = hashlib.sha256()
-    try:
-        with open(filepath, "rb") as f:
-            for chunk in iter(lambda: f.read(4096), b""):
-                hash_sha.update(chunk)
-        return hash_sha.hexdigest()
-    except Exception as e:
-        print(f"{Colors.RED}Error hashing {format_win_path(filepath)}: {e}{Colors.END}")
-        return None
-
-
-def get_relative_paths(folder_path, base_folder):
-    """Get all relative file paths and directory paths"""
-    files = set()
-    dirs = set()
-
-    for root, dirnames, filenames in os.walk(folder_path, topdown=True):
-        if should_exclude_folder(root):
-            dirnames.clear()
-            continue
-
-        rel_root = os.path.relpath(root, base_folder)
-        dirs.add(rel_root)
-
-        for filename in filenames:
-            rel_path = os.path.relpath(os.path.join(root, filename), base_folder)
-            files.add(rel_path)
-
-    return files, dirs
-
-
-def get_folder_size(path):
-    """Calculate total size of all files in directory (in bytes)"""
-    total = 0
-    for root, _, filenames in os.walk(path):
-        if should_exclude_folder(root):
-            continue
-        for f in filenames:
-            fp = os.path.join(root, f)
-            try:
-                total += os.path.getsize(fp)
-            except:
-                continue
-    return total
-
-
-def get_file_details(folder, base_folder):
-    """Get files with their modification times, sizes, and hashes"""
-    file_details = {}
-    for root, _, filenames in os.walk(folder):
-        if should_exclude_folder(root):
-            continue
-        for filename in filenames:
-            abs_path = os.path.join(root, filename)
-            rel_path = os.path.relpath(abs_path, base_folder)
-            file_details[rel_path] = {
-                'mtime': os.path.getmtime(abs_path),
-                'size': os.path.getsize(abs_path),
-                'hash': get_file_hash(abs_path),
-                'path': abs_path
-            }
-    return file_details
-
-
-def format_time(timestamp):
-    """Convert timestamp to readable format"""
-    return datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
-
-
-def robust_copy(src_path, dest_path, operation="copy"):
-    """Retry wrapper for file operations with exponential backoff"""
-    attempts = 0
-    while attempts < RETRY_ATTEMPTS:
-        try:
-            if operation == "copy":
-                shutil.copy2(src_path, dest_path)
-            elif operation == "delete":
-                os.remove(src_path)
-            return True
-        except Exception as e:
-            attempts += 1
-            if attempts >= RETRY_ATTEMPTS:
-                raise
-            time.sleep(RETRY_DELAY * (2 ** (attempts - 1)))
-    return False
-
-
-def copy_worker(src_path, dest_path, progress):
-    """Thread worker for copy operations"""
-    try:
-        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-
-        src_hash = get_file_hash(src_path)
-        dest_hash = get_file_hash(dest_path) if os.path.exists(dest_path) else None
-
-        if src_hash != dest_hash:
-            robust_copy(src_path, dest_path)
-            progress[0] += 1
-            print(f"{Colors.GREEN}Copied {format_win_path(src_path)} to {format_win_path(dest_path)}{Colors.END}")
-        else:
-            print(f"{Colors.CYAN}Skipped identical file: {format_win_path(src_path)}{Colors.END}")
-
-    except Exception as e:
-        print(f"{Colors.RED}Error copying {format_win_path(src_path)}: {e}{Colors.END}")
+from config import source_folder, destination_folder, excluded_folders, MAX_WORKERS
+from utils import Colors, ensure_logs_dir, format_win_path, get_folder_size, format_time, should_exclude_folder
+from ui import show_sample
+from file_ops import get_relative_paths, get_file_details, robust_copy, copy_worker
 
 
 def copy_files(src, dest):
     """Sync files from source to destination with parallel processing"""
     try:
+        # Pre-flight check: verify source and destination exist
+        if not os.path.exists(src):
+            print(f"{Colors.RED}Source folder doesn't exist: {src}{Colors.END}")
+            return
+
+        os.makedirs(dest, exist_ok=True)
+
+        # Check disk space availability
+        src_size = get_folder_size(src)
+        dest_free = shutil.disk_usage(dest).free
+
+        if dest_free < src_size:
+            print(
+                f"{Colors.RED}Not enough space on destination drive. Need {src_size/1e9:.2f} GB, have {dest_free/1e9:.2f} GB{Colors.END}")
+            return
+
         file_pairs = []
         total_size = 0
         for root, dirs, files in os.walk(src, topdown=True):
@@ -275,7 +38,11 @@ def copy_files(src, dest):
                 rel_path = os.path.relpath(src_path, src)
                 dest_path = os.path.join(dest, rel_path)
                 file_pairs.append((src_path, dest_path))
-                total_size += os.path.getsize(src_path)
+                try:
+                    total_size += os.path.getsize(src_path)
+                except Exception as e:
+                    print(
+                        f"{Colors.YELLOW}Warning: Could not get size for {format_win_path(src_path)}: {e}{Colors.END}")
 
         print(f"{Colors.MAGENTA}Total to sync: {len(file_pairs)} files ({total_size/1024/1024:.2f} MB){Colors.END}")
 
@@ -314,10 +81,11 @@ def delete_obsolete_items(src, dest):
                         print(f"{Colors.RED}Delete failed: {abs_path} - {e}{Colors.END}")
 
         if obsolete_dirs:
-            show_sample(sorted(obsolete_dirs, key=lambda x: x.count('\\'), reverse=True),
-                        "Obsolete directories found")
+            # Sort directories by depth (deepest first) to avoid dependency issues
+            sorted_dirs = sorted(obsolete_dirs, key=lambda x: x.count('\\'), reverse=True)
+            show_sample(sorted_dirs, "Obsolete directories found")
             if input(f"{Colors.YELLOW}Delete these directories? (yes/no): {Colors.END}").lower() == "yes":
-                for d in obsolete_dirs:
+                for d in sorted_dirs:
                     try:
                         shutil.rmtree(d)
                         print(f"{Colors.GREEN}Deleted directory: {d}{Colors.END}")
@@ -334,6 +102,13 @@ def delete_obsolete_items(src, dest):
 def restore_files(src, dest):
     """Restore items from backup to source with overwrite options"""
     try:
+        # Pre-flight check: verify source and destination exist
+        if not os.path.exists(dest):
+            print(f"{Colors.RED}Backup folder doesn't exist: {dest}{Colors.END}")
+            return
+
+        os.makedirs(src, exist_ok=True)
+
         src_files = get_file_details(src, src)
         dest_files = get_file_details(dest, dest)
 
@@ -397,34 +172,60 @@ def restore_files(src, dest):
             print(f"{Colors.YELLOW}Restore cancelled{Colors.END}")
             return
 
+        # Create a restore point of the current state if user wants
+        if input(
+                f"{Colors.YELLOW}Create backup of current state before restoring? (yes/no): {Colors.END}").lower() == "yes":
+            backup_dir = os.path.join(src, f"backup_before_restore_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+            os.makedirs(backup_dir, exist_ok=True)
+            print(f"{Colors.CYAN}Creating backup at: {format_win_path(backup_dir)}{Colors.END}")
+
+            # Only backup files that will be modified
+            for rel_path in to_restore.keys():
+                src_path = os.path.join(src, rel_path)
+                if os.path.exists(src_path):
+                    backup_path = os.path.join(backup_dir, rel_path)
+                    os.makedirs(os.path.dirname(backup_path), exist_ok=True)
+                    try:
+                        shutil.copy2(src_path, backup_path)
+                    except Exception as e:
+                        print(f"{Colors.YELLOW}Could not backup {format_win_path(src_path)}: {e}{Colors.END}")
+
         # Restore directories first
         for rel_dir in sorted(missing_dirs, key=lambda x: x.count(os.sep)):
             target_dir = os.path.join(src, rel_dir)
             os.makedirs(target_dir, exist_ok=True)
             print(f"{Colors.GREEN}Restored directory: {format_win_path(target_dir)}{Colors.END}")
 
+        # Restore files with progress tracking
+        successful_restores = 0
+        total_restores = len(to_restore)
+
         # Restore files in parallel
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
             restore_tasks = []
+            restore_paths = []  # Track paths for reporting
+
             for rel_path, (status, dest_data) in to_restore.items():
                 src_path = os.path.join(src, rel_path)
                 dest_path = dest_data['path']
+                restore_paths.append(src_path)  # Store path for reporting
                 restore_tasks.append(executor.submit(
                     robust_copy, dest_path, src_path, "copy"
                 ))
 
-            for i, task in enumerate(restore_tasks):
+            for i, (task, path) in enumerate(zip(restore_tasks, restore_paths)):
                 try:
                     task.result()
-                    print(f"{Colors.GREEN}Restored file: {format_win_path(src_path)}{Colors.END}")
+                    successful_restores += 1
+                    print(f"{Colors.GREEN}Restored file: {format_win_path(path)}{Colors.END}")
                 except Exception as e:
-                    print(f"{Colors.RED}Restore failed: {format_win_path(src_path)} - {e}{Colors.END}")
+                    print(f"{Colors.RED}Restore failed: {format_win_path(path)} - {e}{Colors.END}")
                 if i % 10 == 0:
                     print(
                         f"{Colors.YELLOW}Progress: {i+1}/{len(restore_tasks)} ({((i+1)/len(restore_tasks)):.1%}){Colors.END}",
                         end='\r')
 
-        print(f"\n{Colors.GREEN}Restore completed successfully!{Colors.END}")
+        print(f"\n{Colors.GREEN}Restore completed: {successful_restores}/{total_restores} files restored!{Colors.END}")
 
     except Exception as e:
         print(f"{Colors.RED}Restore error: {e}{Colors.END}")
@@ -433,6 +234,12 @@ def restore_files(src, dest):
 def show_differences():
     """Show detailed comparison between source and destination"""
     print(f"\n{Colors.MAGENTA}=== Analyzing Differences ==={Colors.END}")
+
+    # Pre-flight check: verify source and destination exist
+    if not os.path.exists(source_folder) or not os.path.exists(destination_folder):
+        print(f"{Colors.RED}Source or destination folder doesn't exist{Colors.END}")
+        return
+
     src_files = get_file_details(source_folder, source_folder)
     dest_files = get_file_details(destination_folder, destination_folder)
 
