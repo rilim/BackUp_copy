@@ -1,5 +1,6 @@
 import os
 import shutil
+import threading
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from config import source_folder, destination_folder, excluded_folders, MAX_WORKERS
@@ -9,7 +10,7 @@ from file_ops import get_relative_paths, get_file_details, robust_copy, copy_wor
 
 
 def copy_files(src, dest):
-    """Sync files from source to destination with parallel processing"""
+    """Sync files from source to destination with parallel processing and accurate ETA"""
     try:
         # Pre-flight check: verify source and destination exist
         if not os.path.exists(src):
@@ -21,16 +22,15 @@ def copy_files(src, dest):
         # Check disk space availability
         src_size = get_folder_size(src)
         dest_free = shutil.disk_usage(dest).free
-
         if dest_free < src_size:
-            print(
-                f"{Colors.RED}Not enough space on destination drive. Need {src_size/1e9:.2f} GB, have {dest_free/1e9:.2f} GB{Colors.END}")
+            print(f"{Colors.RED}Not enough space on destination drive. Need {src_size/1e9:.2f} GB, have {dest_free/1e9:.2f} GB{Colors.END}")
             return
 
+        # Gather all files from the source folder recursively
         file_pairs = []
         total_size = 0
         for root, dirs, files in os.walk(src, topdown=True):
-            if should_exclude_folder(root):
+            if should_exclude_folder(root, excluded_folders):
                 dirs.clear()
                 continue
             for file in files:
@@ -41,21 +41,66 @@ def copy_files(src, dest):
                 try:
                     total_size += os.path.getsize(src_path)
                 except Exception as e:
-                    print(
-                        f"{Colors.YELLOW}Warning: Could not get size for {format_win_path(src_path)}: {e}{Colors.END}")
+                    print(f"{Colors.YELLOW}Warning: Could not get size for {format_win_path(src_path)}: {e}{Colors.END}")
 
-        print(f"{Colors.MAGENTA}Total to sync: {len(file_pairs)} files ({total_size/1024/1024:.2f} MB){Colors.END}")
+        print(f"{Colors.MAGENTA}Total files found: {len(file_pairs)}, Total size: {total_size / (1024 * 1024):.2f} MB{Colors.END}")
+
+        # Filter the list of files to only those that need to be copied (changed or new)
+        files_to_copy = []
+        for s, d in file_pairs:
+            if not os.path.exists(d):
+                files_to_copy.append((s, d))
+            else:
+                try:
+                    if os.path.getmtime(s) > os.path.getmtime(d) or os.path.getsize(s) != os.path.getsize(d):
+                        files_to_copy.append((s, d))
+                except Exception:
+                    files_to_copy.append((s, d))
+        total_files = len(files_to_copy)
+        print(f"{Colors.MAGENTA}Need to sync: {total_files} files{Colors.END}")
 
         progress = [0]
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            for i, (s, d) in enumerate(file_pairs):
-                executor.submit(copy_worker, s, d, progress)
-                if i % 10 == 0:
-                    print(
-                        f"{Colors.YELLOW}Progress: {progress[0]}/{len(file_pairs)} ({progress[0]/len(file_pairs):.1%}){Colors.END}",
-                        end='\r')
+        progress_lock = threading.Lock()  # To make progress update thread-safe
+        start_time = datetime.now()
 
-        print(f"\n{Colors.GREEN}Synced {progress[0]} files successfully!{Colors.END}")
+        def format_duration(seconds):
+            """Format seconds as H:M:S string"""
+            seconds = int(seconds)
+            h = seconds // 3600
+            m = (seconds % 3600) // 60
+            s = seconds % 60
+            return f"{h:02d}:{m:02d}:{s:02d}"
+
+        def print_progress():
+            """Calculate and display progress, including ETA"""
+            elapsed = (datetime.now() - start_time).total_seconds()
+            with progress_lock:
+                count = progress[0]
+            if count == 0:
+                eta_str = "Calculating..."
+            else:
+                avg_time_per_file = elapsed / count
+                remaining = total_files - count
+                eta_seconds = avg_time_per_file * remaining
+                if eta_seconds < 1:
+                    eta_str = "less than 1s"
+                else:
+                    eta_str = format_duration(eta_seconds)
+            percent = (count / total_files * 100) if total_files else 100
+            print(f"\r{Colors.YELLOW}Progress: {count}/{total_files} ({percent:.1f}%), ETA: {eta_str}{Colors.END}", end='\n', flush=True)
+
+        # Copy files in parallel, updating progress safely
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            futures = []
+            for s, d in files_to_copy:
+                futures.append(executor.submit(copy_worker, s, d, progress, progress_lock))
+            for i, future in enumerate(futures):
+                future.result()
+                if (i + 1) % 10 == 0 or (i + 1) == total_files:
+                    print_progress()
+
+        print()  # Newline after progress output
+        print(f"{Colors.GREEN}Synced {progress[0]} files successfully!{Colors.END}")
 
     except Exception as e:
         print(f"{Colors.RED}Copy error: {e}{Colors.END}")
@@ -256,18 +301,18 @@ def show_differences():
     dest_size = get_folder_size(destination_folder)
 
     print(f"\n{Colors.CYAN}Directory Sizes:{Colors.END}")
-    print(f"Source: {src_size/1024/1024:.2f} MB")
-    print(f"Destination: {dest_size/1024/1024:.2f} MB")
+    print(f"Source: {src_size/(1024*1024):.2f} MB")
+    print(f"Destination: {dest_size/(1024*1024):.2f} MB")
 
     print(f"\n{Colors.CYAN}{' Source Only ':-^50}{Colors.END}")
-    print(f"Files: {len(abs_only_source)} | Size: {sum(src_files[f]['size'] for f in only_in_source)/1024/1024:.2f} MB")
+    print(f"Files: {len(abs_only_source)} | Size: {sum(src_files[f]['size'] for f in only_in_source)/(1024*1024):.2f} MB")
 
     print(f"\n{Colors.CYAN}{' Destination Only ':-^50}{Colors.END}")
-    print(f"Files: {len(abs_only_dest)} | Size: {sum(dest_files[f]['size'] for f in only_in_dest)/1024/1024:.2f} MB")
+    print(f"Files: {len(abs_only_dest)} | Size: {sum(dest_files[f]['size'] for f in only_in_dest)/(1024*1024):.2f} MB")
 
     print(f"\n{Colors.CYAN}{' Modified Files ':-^50}{Colors.END}")
     print(f"Count: {len(abs_modified)} | Size Difference: "
-          f"{(sum(src_files[f]['size'] for f in modified_files) - sum(dest_files[f]['size'] for f in modified_files))/1024/1024:.2f} MB")
+          f"{(sum(src_files[f]['size'] for f in modified_files) - sum(dest_files[f]['size'] for f in modified_files))/(1024*1024):.2f} MB")
 
     show_sample(abs_only_source, "Unique source files", source_folder)
     show_sample(abs_only_dest, "Unique destination files", destination_folder)
